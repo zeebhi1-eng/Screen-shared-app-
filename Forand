@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>PRO WebRTC</title>
+</head>
+
+<body>
+
+<h2>Login</h2>
+
+<input id="name" placeholder="name">
+<input id="pass" placeholder="password">
+<button onclick="login()">Login</button>
+
+<hr>
+
+<h2>Room</h2>
+
+<input id="room" placeholder="room">
+<button onclick="join()">Join</button>
+
+<video id="local" autoplay></video>
+<video id="remote" autoplay></video>
+
+<script src="/socket.io/socket.io.js"></script>
+
+<script>
+let socket;
+let token;
+let peer;
+let stream;
+
+async function login(){
+
+  const res = await fetch("/login", {
+    method:"POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({
+      name: name.value,
+      password: pass.value
+    })
+  });
+
+  const data = await res.json();
+  token = data.token;
+
+  socket = io({
+    auth: { token }
+  });
+}
+
+function join(){
+
+  socket.emit("join-room", room.value);
+
+  socket.on("offer", async (offer)=>{
+    await peer.setRemoteDescription(offer);
+
+    const answer = await peer.createAnswer();
+    await peer.setLocalDescription(answer);
+
+    socket.emit("answer", { answer, room: room.value });
+  });
+
+  socket.on("answer", async (answer)=>{
+    await peer.setRemoteDescription(answer);
+  });
+
+  socket.on("ice", async (c)=>{
+    await peer.addIceCandidate(c);
+  });
+
+  startCamera();
+}
+
+async function startCamera(){
+
+  stream = await navigator.mediaDevices.getUserMedia({
+    video:true,
+    audio:true
+  });
+
+  local.srcObject = stream;
+
+  peer = new RTCPeerConnection({
+    iceServers:[{ urls:"stun:stun.l.google.com:19302" }]
+  });
+
+  stream.getTracks().forEach(t => peer.addTrack(t, stream));
+
+  peer.ontrack = (e)=>{
+    remote.srcObject = e.streams[0];
+  };
+
+  peer.onicecandidate = (e)=>{
+    if(e.candidate){
+      socket.emit("ice-candidate", {
+        candidate: e.candidate,
+        room: room.value
+      });
+    }
+  };
+
+  const offer = await peer.createOffer();
+  await peer.setLocalDescription(offer);
+
+  socket.emit("offer", {
+    offer,
+    room: room.value
+  });
+}
+</script>
+
+</body>
+</html>
